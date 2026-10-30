@@ -13,7 +13,7 @@
     --accent:#236EB2; --accent-ink:#FFFFFF; --accent-soft:#DCEAF8;
     --good:#3F8F5C; --good-soft:#DCEEE1; --warn:#C98A2E; --warn-soft:#F5E6C8;
     --critical:#B0392E; --critical-soft:#F5DCD8; --neutral:#726C85; --neutral-soft:#E7E4EE;
-    --cat-1:#C1622A; --cat-2:#2A6FB0; --cat-3:#2F7A4F; --cat-4:#A9760F; --cat-5:#0A9494; --cat-6:#8B3E7A;
+    --cat-1:#C1622A; --cat-2:#2A6FB0; --cat-3:#2F7A4F; --cat-4:#A9760F; --cat-5:#8B3E7A; --cat-6:#0A9494; --cat-7:#6F60B2; --cat-8:#B0434F;
     --stage-1:#7FACDC; --stage-2:#5F97CC; --stage-3:#3B82C8; --stage-4:#236EB2; --stage-5:#726C85;
     --font-display:'Libre Franklin',system-ui,sans-serif;
     --font-body:'IBM Plex Sans',system-ui,sans-serif;
@@ -280,12 +280,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   var sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
   var PARTNER_TYPES = [
-    {key:'hospital',  label:'Hospital',                 color:'var(--cat-1)'},
-    {key:'physician', label:'Physician Practice',        color:'var(--cat-2)'},
-    {key:'snf',       label:'SNF / Rehab Facility',      color:'var(--cat-3)'},
-    {key:'discharge', label:'Discharge Planner',         color:'var(--cat-4)'},
-    {key:'assisted',  label:'Assisted / Senior Living',  color:'var(--cat-5)'},
-    {key:'other',     label:'Community / Other',         color:'var(--cat-6)'}
+    {key:'hospital',   label:'Hospital',                  color:'var(--cat-1)'},
+    {key:'physician',  label:'Physician Practice',         color:'var(--cat-2)'},
+    {key:'snf',        label:'SNF / Rehab Facility',       color:'var(--cat-3)'},
+    {key:'homecare',   label:'Home Care',                  color:'var(--cat-4)'},
+    {key:'hospice',    label:'Hospice',                    color:'var(--cat-5)'},
+    {key:'homehealth', label:'Home Health',                color:'var(--cat-6)'},
+    {key:'assisted',   label:'Assisted / Senior Living',   color:'var(--cat-7)'},
+    {key:'other',      label:'Professional & Community',   color:'var(--cat-8)'}
   ];
   var SERVICE_LINES = ['Home Care','Hospice','Mobile Primary Care','Transitional Care','Complex Chronic Care Management'];
   var STAGES = [
@@ -536,6 +538,141 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
   }
   function closeModal(){ var b = document.getElementById('modal-backdrop'); if(b) b.remove(); }
+
+  // ---------- CSV import ----------
+  var pendingImportRows = null;
+
+  function parseCsvRows(text){
+    var rows = [], row = [], field = '', inQuotes = false;
+    text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+    for(var i=0;i<text.length;i++){
+      var ch = text[i];
+      if(inQuotes){
+        if(ch==='"'){ if(text[i+1]==='"'){ field+='"'; i++; } else { inQuotes=false; } }
+        else field+=ch;
+      }else{
+        if(ch==='"') inQuotes=true;
+        else if(ch===','){ row.push(field); field=''; }
+        else if(ch==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+        else field+=ch;
+      }
+    }
+    if(field.length || row.length){ row.push(field); rows.push(row); }
+    return rows.filter(function(r){ return r.length>1 || (r[0] && r[0].trim()); });
+  }
+
+  function parseImportCsv(text){
+    var rows = parseCsvRows(text);
+    if(!rows.length) throw new Error('File is empty');
+    var header = rows[0].map(function(h){ return (h||'').trim().toLowerCase(); });
+    function col(name){ return header.indexOf(name); }
+    var iOrg=col('organization name'), iType=col('type'), iSvc=col('service lines'), iAddr=col('address'), iCity=col('city'),
+        iPrio=col('priority'), iNext=col('next follow-up'),
+        iCName=col('contact name'), iCTitle=col('contact title'), iCPhone=col('contact phone'), iCEmail=col('contact email');
+    if(iOrg<0) throw new Error('No "Organization Name" column found — check it matches the template');
+
+    var typeByLabel = {};
+    PARTNER_TYPES.forEach(function(t){ typeByLabel[t.label.toLowerCase()] = t.key; });
+
+    var groups = {}, order = [], skipped = 0, contactCount = 0;
+    for(var r=1;r<rows.length;r++){
+      var row = rows[r];
+      var org = (row[iOrg]||'').trim();
+      if(!org){ skipped++; continue; }
+      if(!groups[org]){
+        groups[org] = {
+          org_name: org,
+          type: (iType>=0 && typeByLabel[(row[iType]||'').trim().toLowerCase()]) || 'other',
+          service_lines: iSvc>=0 ? (row[iSvc]||'').split(/[;,]/).map(function(s){return s.trim();}).filter(function(s){ return SERVICE_LINES.indexOf(s)>-1; }) : [],
+          address: iAddr>=0 ? (row[iAddr]||'').trim() : '',
+          city: iCity>=0 ? (row[iCity]||'').trim() : '',
+          priority: iPrio>=0 ? (row[iPrio]||'').trim() : '',
+          next_follow_up: iNext>=0 ? ((row[iNext]||'').trim() || null) : null,
+          stage: 'Prospect',
+          contacts: []
+        };
+        order.push(org);
+      }
+      if(iCName>=0 || iCPhone>=0 || iCEmail>=0 || iCTitle>=0){
+        var c = { name:(row[iCName]||'').trim(), title:(row[iCTitle]||'').trim(), phone:(row[iCPhone]||'').trim(), email:(row[iCEmail]||'').trim() };
+        if(c.name||c.title||c.phone||c.email){ groups[org].contacts.push(c); contactCount++; }
+      }
+    }
+    return { partners: order.map(function(o){ return groups[o]; }), skipped: skipped, contactCount: contactCount };
+  }
+
+  function csvEsc(v){ v = v===undefined||v===null?'':String(v); if(/[",\n]/.test(v)){ v = '"'+v.replace(/"/g,'""')+'"'; } return v; }
+
+  function downloadImportTemplate(){
+    var cols = ['Organization Name','Type','Service Lines','Address','City','Priority','Next Follow-up','Contact Name','Contact Title','Contact Phone','Contact Email'];
+    var example1 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','','','Jane Smith','Discharge Planner','520-555-0100','jane@example.com'];
+    var example2 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','','','Mark Lee','Case Manager','520-555-0101','mark@example.com'];
+    var text = [cols, example1, example2].map(function(r){ return r.map(csvEsc).join(','); }).join('\n');
+    var blob = new Blob([text], {type:'text/csv;charset=utf-8;'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a'); a.href=url; a.download='partner-import-template.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function openImportModal(){
+    pendingImportRows = null;
+    openModal({
+      title: 'Import referral partners from CSV',
+      body: ''+
+        '<p class="muted" style="margin:0 0 10px;font-size:13px;">Upload a spreadsheet to add organizations in bulk — one row per contact, grouped by organization name, so a location with many contacts just needs several rows with the same name. '+
+        '<a href="#" id="import-template-link">Download a template</a> to see the exact columns expected.</p>'+
+        '<input type="file" id="import-file-input" accept=".csv" style="width:100%;margin-bottom:10px;"/>'+
+        '<div id="import-summary" class="muted" style="font-size:12.5px;min-height:18px;"></div>',
+      actions: [
+        {label:'Import', primary:true, onClick: function(){ runImport(); }},
+        {label:'Cancel', onClick:closeModal}
+      ]
+    });
+    document.getElementById('import-template-link').addEventListener('click', function(e){ e.preventDefault(); downloadImportTemplate(); });
+    document.getElementById('import-file-input').addEventListener('change', function(e){
+      var file = e.target.files[0];
+      if(!file) return;
+      var reader = new FileReader();
+      reader.onload = function(ev){
+        var summaryEl = document.getElementById('import-summary');
+        try{
+          var parsed = parseImportCsv(ev.target.result);
+          if(!parsed.partners.length){ throw new Error('No rows with an organization name were found'); }
+          pendingImportRows = parsed.partners;
+          summaryEl.innerHTML = '<strong style="color:var(--ink);">'+parsed.partners.length+' organization'+(parsed.partners.length===1?'':'s')+'</strong> ready to import'+
+            (parsed.contactCount ? ', with '+parsed.contactCount+' contact'+(parsed.contactCount===1?'':'s') : '')+
+            (parsed.skipped ? '. '+parsed.skipped+' row'+(parsed.skipped===1?'':'s')+' skipped (no organization name).' : '.');
+        }catch(err){
+          pendingImportRows = null;
+          summaryEl.innerHTML = '<span style="color:var(--critical);">Couldn’t read that file: '+esc(err.message)+'</span>';
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  async function runImport(){
+    if(!pendingImportRows || !pendingImportRows.length){ toast('Choose a CSV file first', true); return; }
+    var rowsToInsert = pendingImportRows.map(function(p){
+      return {
+        org_name: p.org_name, type: p.type, service_lines: p.service_lines,
+        address: p.address, city: p.city, contacts: p.contacts,
+        stage: p.stage, priority: p.priority, next_follow_up: p.next_follow_up,
+        activity: logActivityLocal([], 'created', 'Imported from CSV'),
+        added_by: session.user.id, added_by_name: profile.name,
+        updated_by: session.user.id, updated_by_name: profile.name
+      };
+    });
+    var count = rowsToInsert.length;
+    closeModal();
+    var res = await sbClient.from('partners').insert(rowsToInsert).select();
+    if(res.error){ toast('Import failed: '+res.error.message, true); return; }
+    DATA.partners = res.data.concat(DATA.partners);
+    pendingImportRows = null;
+    toast('Imported '+res.data.length+' of '+count+' partners');
+    render();
+  }
 
   function openPartnerForm(id){
     activePartnerId = id || null;
@@ -828,6 +965,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       '<div class="table-toolbar">'+
         '<div class="search-wrap">'+ICONS.search+'<input class="search-input" id="search-input" placeholder="Search organization, contact, or city…" value="'+esc(filters.q)+'"/></div>'+
         '<div class="chip-filter">'+stageChips+'</div>'+
+        '<button class="btn" id="import-csv-btn">'+ICONS.plus+' Import CSV</button>'+
         '<button class="btn btn-primary" id="add-partner-btn">'+ICONS.plus+' Add Partner</button>'+
       '</div>'+
       '<div class="table-scroll"><table><thead><tr>'+
@@ -969,6 +1107,8 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(currentView==='partners'){
       var addBtn = document.getElementById('add-partner-btn');
       if(addBtn) addBtn.addEventListener('click', function(){ openPartnerForm(null); });
+      var importBtn = document.getElementById('import-csv-btn');
+      if(importBtn) importBtn.addEventListener('click', openImportModal);
       document.querySelectorAll('[data-open]').forEach(function(tr){ tr.addEventListener('click', function(){ openPartnerForm(tr.getAttribute('data-open')); }); });
       document.querySelectorAll('[data-stage-filter]').forEach(function(chip){
         chip.addEventListener('click', function(){ var s = chip.getAttribute('data-stage-filter'); filters.stage = filters.stage===s? null : s; render(); });
