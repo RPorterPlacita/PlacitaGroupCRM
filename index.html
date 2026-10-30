@@ -250,8 +250,8 @@
    CONFIGURE ME: paste your Supabase project's URL and anon public key here.
    Find them in your Supabase project: Settings → API.
    ========================================================================= */
-const SUPABASE_URL = 'https://rdicnbfgfydmyemrrwcn.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkaWNuYmZnZnlkbXllbXJyd2NuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMyOTA4MDYsImV4cCI6MjEwODg2NjgwNn0.IRtDaO8g0ys-U1TDT983sKHAjxoOlx0fo88SqBu0fGA';
+const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 /* ========================================================================= */
 
 (function(){
@@ -312,7 +312,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   var currentView = 'dashboard';
   var activePartnerId = null;
   var slideOverOpen = false;
-  var filters = { stage:null, type:null, q:'' };
+  var filters = { stage:null, type:null, serviceLine:null, q:'' };
   var sortCol = 'org_name', sortDir = 1;
   var userMenuOpen = false;
 
@@ -452,7 +452,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   async function addPartner(data){
     var row = {
       org_name:data.orgName, type:data.type, service_lines:data.serviceLines,
-      address:data.address, city:data.city, contacts:data.contacts||[],
+      address:data.address, city:data.city, zip:data.zip, contacts:data.contacts||[],
       stage:data.stage, priority:data.priority, next_follow_up:data.nextFollowUp||null,
       activity: logActivityLocal([], 'created', 'Added to the CRM'),
       added_by: session.user.id, added_by_name: profile.name,
@@ -472,7 +472,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(activityNote) activity = logActivityLocal(activity, 'edited', activityNote);
     var row = Object.assign({}, {
       org_name:patch.orgName, type:patch.type, service_lines:patch.serviceLines,
-      address:patch.address, city:patch.city, contacts:patch.contacts||[],
+      address:patch.address, city:patch.city, zip:patch.zip, contacts:patch.contacts||[],
       stage:patch.stage, priority:patch.priority, next_follow_up:patch.nextFollowUp||null
     }, { activity:activity, updated_by:session.user.id, updated_by_name:profile.name, updated_at:nowIso() });
     var res = await sbClient.from('partners').update(row).eq('id', id).select().single();
@@ -566,7 +566,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(!rows.length) throw new Error('File is empty');
     var header = rows[0].map(function(h){ return (h||'').trim().toLowerCase(); });
     function col(name){ return header.indexOf(name); }
-    var iOrg=col('organization name'), iType=col('type'), iSvc=col('service lines'), iAddr=col('address'), iCity=col('city'),
+    var iOrg=col('organization name'), iType=col('type'), iSvc=col('service lines'), iAddr=col('address'), iCity=col('city'), iZip=col('zip'),
         iPrio=col('priority'), iNext=col('next follow-up'),
         iCName=col('contact name'), iCTitle=col('contact title'), iCPhone=col('contact phone'), iCEmail=col('contact email');
     if(iOrg<0) throw new Error('No "Organization Name" column found — check it matches the template');
@@ -586,6 +586,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           service_lines: iSvc>=0 ? (row[iSvc]||'').split(/[;,]/).map(function(s){return s.trim();}).filter(function(s){ return SERVICE_LINES.indexOf(s)>-1; }) : [],
           address: iAddr>=0 ? (row[iAddr]||'').trim() : '',
           city: iCity>=0 ? (row[iCity]||'').trim() : '',
+          zip: iZip>=0 ? (row[iZip]||'').trim() : '',
           priority: iPrio>=0 ? (row[iPrio]||'').trim() : '',
           next_follow_up: iNext>=0 ? ((row[iNext]||'').trim() || null) : null,
           stage: 'Prospect',
@@ -604,9 +605,9 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function csvEsc(v){ v = v===undefined||v===null?'':String(v); if(/[",\n]/.test(v)){ v = '"'+v.replace(/"/g,'""')+'"'; } return v; }
 
   function downloadImportTemplate(){
-    var cols = ['Organization Name','Type','Service Lines','Address','City','Priority','Next Follow-up','Contact Name','Contact Title','Contact Phone','Contact Email'];
-    var example1 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','','','Jane Smith','Discharge Planner','520-555-0100','jane@example.com'];
-    var example2 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','','','Mark Lee','Case Manager','520-555-0101','mark@example.com'];
+    var cols = ['Organization Name','Type','Service Lines','Address','City','Zip','Priority','Next Follow-up','Contact Name','Contact Title','Contact Phone','Contact Email'];
+    var example1 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','85704','','','Jane Smith','Discharge Planner','520-555-0100','jane@example.com'];
+    var example2 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','85704','','','Mark Lee','Case Manager','520-555-0101','mark@example.com'];
     var text = [cols, example1, example2].map(function(r){ return r.map(csvEsc).join(','); }).join('\n');
     var blob = new Blob([text], {type:'text/csv;charset=utf-8;'});
     var url = URL.createObjectURL(blob);
@@ -657,7 +658,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     var rowsToInsert = pendingImportRows.map(function(p){
       return {
         org_name: p.org_name, type: p.type, service_lines: p.service_lines,
-        address: p.address, city: p.city, contacts: p.contacts,
+        address: p.address, city: p.city, zip: p.zip, contacts: p.contacts,
         stage: p.stage, priority: p.priority, next_follow_up: p.next_follow_up,
         activity: logActivityLocal([], 'created', 'Imported from CSV'),
         added_by: session.user.id, added_by_name: profile.name,
@@ -714,7 +715,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function renderSlideOver(){
     var p = activePartnerId ? getPartner(activePartnerId) : null;
     var isNew = !p;
-    var d = p || {org_name:'',type:'hospital',service_lines:[],city:'',address:'',contacts:[],stage:'Prospect',priority:'',next_follow_up:'',activity:[]};
+    var d = p || {org_name:'',type:'hospital',service_lines:[],city:'',address:'',zip:'',contacts:[],stage:'Prospect',priority:'',next_follow_up:'',activity:[]};
 
     var typeOptions = PARTNER_TYPES.map(function(t){ return '<option value="'+t.key+'"'+(d.type===t.key?' selected':'')+'>'+esc(t.label)+'</option>'; }).join('');
     var stageOptions = STAGES.map(function(s){ return '<option value="'+esc(s.key)+'"'+(d.stage===s.key?' selected':'')+'>'+esc(s.key)+'</option>'; }).join('');
@@ -741,7 +742,11 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         '<div class="field"><label>Street address</label><input id="f-address" value="'+esc(d.address||'')+'" placeholder="e.g. 123 Main St, Suite 4"/></div>'+
         '<div class="field-row">'+
           '<div class="field"><label>City / area</label><input id="f-city" value="'+esc(d.city)+'"/></div>'+
+          '<div class="field"><label>Zip</label><input id="f-zip" value="'+esc(d.zip||'')+'" maxlength="10" placeholder="e.g. 85704"/></div>'+
+        '</div>'+
+        '<div class="field-row">'+
           '<div class="field"><label>Priority</label><select id="f-priority">'+prioOptions+'</select></div>'+
+          '<div class="field"></div>'+
         '</div>'+
         '<div class="field"><label>Next follow-up</label><input type="date" id="f-nextFollowUp" value="'+esc(d.next_follow_up||'')+'"/></div>'+
         '<div class="divider"></div>'+
@@ -793,6 +798,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         serviceLines: Array.prototype.slice.call(document.querySelectorAll('.chip-toggle.on')).map(function(b){ return b.getAttribute('data-svc'); }),
         address: document.getElementById('f-address').value.trim(),
         city: document.getElementById('f-city').value.trim(),
+        zip: document.getElementById('f-zip').value.trim(),
         priority: document.getElementById('f-priority').value,
         nextFollowUp: document.getElementById('f-nextFollowUp').value,
         contacts: Array.prototype.slice.call(document.querySelectorAll('[data-contact-row]')).map(function(row){
@@ -930,20 +936,27 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return '<div class="spark-wrap"><svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'"><line class="spark-grid" x1="'+pad+'" y1="'+(h-pad)+'" x2="'+(w-pad)+'" y2="'+(h-pad)+'"/><path class="spark-area" d="'+area+'"/><path class="spark-line" d="'+line+'"/>'+dots+labelsHtml+'</svg></div>';
   }
 
-  function renderPartnersView(){
+  function getFilteredPartners(){
     var q = filters.q.toLowerCase();
-    var rows = DATA.partners.filter(function(p){
+    return DATA.partners.filter(function(p){
       if(filters.stage && p.stage!==filters.stage) return false;
       if(filters.type && p.type!==filters.type) return false;
+      if(filters.serviceLine && (p.service_lines||[]).indexOf(filters.serviceLine)===-1) return false;
       var contactNames = (p.contacts||[]).map(function(c){ return c.name||''; }).join(' ');
-      if(q && ((p.org_name||'')+' '+contactNames+' '+(p.city||'')+' '+(p.address||'')).toLowerCase().indexOf(q)===-1) return false;
+      if(q && ((p.org_name||'')+' '+contactNames+' '+(p.city||'')+' '+(p.address||'')+' '+(p.zip||'')).toLowerCase().indexOf(q)===-1) return false;
       return true;
     }).sort(function(a,b){
       var av=(a[sortCol]||''), bv=(b[sortCol]||'');
       if(av<bv) return -1*sortDir; if(av>bv) return 1*sortDir; return 0;
     });
+  }
+
+  function renderPartnersView(){
+    var rows = getFilteredPartners();
 
     var stageChips = STAGES.map(function(s){ return '<button class="chip'+(filters.stage===s.key?' on':'')+'" data-stage-filter="'+esc(s.key)+'">'+esc(s.key)+'</button>'; }).join('');
+    var typeOptionsFilter = '<option value="">All types</option>'+PARTNER_TYPES.map(function(t){ return '<option value="'+t.key+'"'+(filters.type===t.key?' selected':'')+'>'+esc(t.label)+'</option>'; }).join('');
+    var svcOptionsFilter = '<option value="">All service lines</option>'+SERVICE_LINES.map(function(s){ return '<option value="'+esc(s)+'"'+(filters.serviceLine===s?' selected':'')+'>'+esc(s)+'</option>'; }).join('');
 
     var rowsHtml = rows.length ? rows.map(function(p){
       var t = typeInfo(p.type); var st = stageInfo(p.stage);
@@ -958,18 +971,22 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         '<td>'+contactCell+'</td>'+
         '<td style="color:'+(d!==null&&d<0?'var(--critical)':'inherit')+';">'+dueLabel+'</td>'+
         '<td class="muted">'+esc(p.city||'—')+'</td>'+
+        '<td class="muted">'+esc(p.zip||'—')+'</td>'+
       '</tr>';
-    }).join('') : '<tr><td colspan="6" class="empty-note">No partners match yet. Try clearing filters, or add your first referral partner.</td></tr>';
+    }).join('') : '<tr><td colspan="7" class="empty-note">No partners match yet. Try clearing filters, or add your first referral partner.</td></tr>';
 
     return ''+
       '<div class="table-toolbar">'+
-        '<div class="search-wrap">'+ICONS.search+'<input class="search-input" id="search-input" placeholder="Search organization, contact, or city…" value="'+esc(filters.q)+'"/></div>'+
+        '<div class="search-wrap">'+ICONS.search+'<input class="search-input" id="search-input" placeholder="Search organization, contact, city, or zip…" value="'+esc(filters.q)+'"/></div>'+
+        '<select id="type-filter-select">'+typeOptionsFilter+'</select>'+
+        '<select id="svc-filter-select">'+svcOptionsFilter+'</select>'+
         '<div class="chip-filter">'+stageChips+'</div>'+
+        '<button class="btn" id="export-filtered-btn">'+ICONS.plus+' Export '+(rows.length!==DATA.partners.length?'('+rows.length+')':'CSV')+'</button>'+
         '<button class="btn" id="import-csv-btn">'+ICONS.plus+' Import CSV</button>'+
         '<button class="btn btn-primary" id="add-partner-btn">'+ICONS.plus+' Add Partner</button>'+
       '</div>'+
       '<div class="table-scroll"><table><thead><tr>'+
-        '<th data-sort="org_name">Organization</th><th data-sort="type">Type</th><th data-sort="stage">Stage</th><th>Contact</th><th data-sort="next_follow_up">Next Follow-up</th><th data-sort="city">City</th>'+
+        '<th data-sort="org_name">Organization</th><th data-sort="type">Type</th><th data-sort="stage">Stage</th><th>Contact</th><th data-sort="next_follow_up">Next Follow-up</th><th data-sort="city">City</th><th data-sort="zip">Zip</th>'+
       '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';
   }
 
@@ -1029,23 +1046,23 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       '</div>';
   }
 
-  function toCsv(){
-    var cols = ['Organization','Type','Service Lines','Address','City','Contacts','Stage','Priority','Next Follow-up','Added By','Added At','Last Updated By','Last Updated At'];
-    var rows = DATA.partners.map(function(p){
+  function toCsv(partnerList){
+    var cols = ['Organization','Type','Service Lines','Address','City','Zip','Contacts','Stage','Priority','Next Follow-up','Added By','Added At','Last Updated By','Last Updated At'];
+    var rows = (partnerList||DATA.partners).map(function(p){
       var contactsStr = (p.contacts||[]).map(function(c){
         return [c.name,c.title,c.phone,c.email].filter(Boolean).join(' / ');
       }).join(' | ');
-      return [p.org_name, typeInfo(p.type).label, (p.service_lines||[]).join('; '), p.address, p.city, contactsStr, p.stage, p.priority, p.next_follow_up, p.added_by_name, p.added_at, p.updated_by_name, p.updated_at];
+      return [p.org_name, typeInfo(p.type).label, (p.service_lines||[]).join('; '), p.address, p.city, p.zip, contactsStr, p.stage, p.priority, p.next_follow_up, p.added_by_name, p.added_at, p.updated_by_name, p.updated_at];
     });
     function esc1(v){ v = v===undefined||v===null?'':String(v); if(/[",\n]/.test(v)){ v = '"'+v.replace(/"/g,'""')+'"'; } return v; }
     var lines = [cols.map(esc1).join(',')].concat(rows.map(function(r){ return r.map(esc1).join(','); }));
     return lines.join('\n');
   }
-  function downloadCsv(){
-    var blob = new Blob([toCsv()], {type:'text/csv;charset=utf-8;'});
+  function downloadCsv(partnerList, filename){
+    var blob = new Blob([toCsv(partnerList)], {type:'text/csv;charset=utf-8;'});
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
-    a.href = url; a.download = 'placita-partners.csv';
+    a.href = url; a.download = filename || 'placita-partners.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
@@ -1109,6 +1126,21 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(addBtn) addBtn.addEventListener('click', function(){ openPartnerForm(null); });
       var importBtn = document.getElementById('import-csv-btn');
       if(importBtn) importBtn.addEventListener('click', openImportModal);
+      var typeFilterSelect = document.getElementById('type-filter-select');
+      if(typeFilterSelect) typeFilterSelect.addEventListener('change', function(){ filters.type = typeFilterSelect.value || null; render(); });
+      var svcFilterSelect = document.getElementById('svc-filter-select');
+      if(svcFilterSelect) svcFilterSelect.addEventListener('change', function(){ filters.serviceLine = svcFilterSelect.value || null; render(); });
+      var exportFilteredBtn = document.getElementById('export-filtered-btn');
+      if(exportFilteredBtn) exportFilteredBtn.addEventListener('click', function(){
+        var filtered = getFilteredPartners();
+        var isFiltered = filtered.length !== DATA.partners.length;
+        var nameBits = [];
+        if(filters.type) nameBits.push(typeInfo(filters.type).label.toLowerCase().replace(/[^a-z0-9]+/g,'-'));
+        if(filters.serviceLine) nameBits.push(filters.serviceLine.toLowerCase().replace(/[^a-z0-9]+/g,'-'));
+        var nameBit = nameBits.length ? nameBits.join('-') : 'filtered';
+        downloadCsv(filtered, isFiltered ? 'placita-partners-'+nameBit+'.csv' : 'placita-partners.csv');
+        toast('Downloaded '+filtered.length+' partner'+(filtered.length===1?'':'s'));
+      });
       document.querySelectorAll('[data-open]').forEach(function(tr){ tr.addEventListener('click', function(){ openPartnerForm(tr.getAttribute('data-open')); }); });
       document.querySelectorAll('[data-stage-filter]').forEach(function(chip){
         chip.addEventListener('click', function(){ var s = chip.getAttribute('data-stage-filter'); filters.stage = filters.stage===s? null : s; render(); });
