@@ -73,7 +73,7 @@
 
   .app-shell{display:none; grid-template-columns:236px 1fr; min-height:100vh;}
   .app-shell.on{display:grid;}
-  @media (max-width:840px){ .app-shell{grid-template-columns:1fr;} .sidebar{position:sticky; top:0; z-index:20;} }
+  @media (max-width:840px){ .app-shell{grid-template-columns:1fr;} }
   .sidebar{background:var(--surface); border-right:1px solid var(--line); display:flex; flex-direction:column; padding:20px 14px;}
   .brand{display:flex; align-items:center; gap:10px; padding:2px 8px 20px; border-bottom:1px solid var(--line); margin-bottom:14px;}
   .brand .mark{width:30px; height:30px; border-radius:8px; background:var(--accent); color:var(--accent-ink); display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:900; font-size:14px; flex-shrink:0;}
@@ -228,6 +228,43 @@
   .modal-card h3{margin-bottom:12px;}
   .skeleton{background:linear-gradient(90deg,var(--surface-2) 25%,var(--line) 37%,var(--surface-2) 63%); background-size:400% 100%; animation:shimmer 1.4s ease infinite; border-radius:6px;}
   @keyframes shimmer{0%{background-position:100% 0;}100%{background-position:0 0;}}
+
+  /* ---- Tablet/phone nav: collapse the side nav into a sticky top strip ---- */
+  @media (max-width:840px){
+    .app-shell{align-content:start;}
+    .sidebar{position:sticky; top:0; z-index:20; flex-direction:row; align-items:center; padding:10px 12px; gap:4px; overflow-x:auto; -webkit-overflow-scrolling:touch; border-right:none; border-bottom:1px solid var(--line);}
+    .brand{border-bottom:none; margin-bottom:0; padding:0 8px 0 0; flex-shrink:0;}
+    .brand .names{display:none;}
+    .nav{flex-direction:row; flex:0 0 auto; gap:2px;}
+    .nav-btn{width:auto; flex-shrink:0; white-space:nowrap; padding:8px 10px; font-size:12.5px;}
+    .sync-dot{display:none;}
+    .main{padding:16px 16px 50px;}
+  }
+
+  /* ---- Phone layout (field use on an iPhone: bigger touch targets, no horizontal table scrolling) ---- */
+  @media (max-width:680px){
+    .field-row{grid-template-columns:1fr;}
+    .table-toolbar{gap:8px;}
+    .table-toolbar > select{flex:1 1 140px; min-width:0;}
+    .table-toolbar > .btn{flex:1 1 auto; justify-content:center;}
+    .btn{padding:11px 16px; min-height:42px;}
+    .chip{padding:8px 14px; font-size:12.5px;}
+    input,select,textarea{padding:11px 12px; font-size:16px;}
+    .auth-tab,.user-btn,.nav-btn{min-height:38px;}
+
+    .partners-table thead{display:none;}
+    .partners-table, .partners-table tbody{display:block; width:100%;}
+    .partners-table{min-width:0;}
+    .partners-table tr{display:block; padding:13px 14px; border-bottom:1px solid var(--line);}
+    .partners-table tr:last-child{border-bottom:none;}
+    .partners-table td{display:flex; justify-content:space-between; align-items:center; gap:10px; padding:4px 0; border-bottom:none; font-size:13px; text-align:right;}
+    .partners-table td::before{content:attr(data-label); font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint); flex-shrink:0; text-align:left;}
+    .partners-table td.org-cell{display:block; text-align:left; font-size:15.5px; font-weight:800; padding:2px 0 8px;}
+    .partners-table td.org-cell::before{content:none;}
+
+    #auth-screen{padding:16px;}
+    .auth-card{padding:24px 20px;}
+  }
 </style>
 </head>
 <body>
@@ -1070,14 +1107,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       var contacts = p.contacts||[];
       var contactCell = contacts.length ? esc(contacts[0].name||'—')+(contacts.length>1?' <span class="muted">+'+(contacts.length-1)+'</span>':'') : '—';
       return '<tr data-open="'+p.id+'">'+
-        '<td class="org-cell">'+esc(p.org_name)+'</td>'+
-        '<td><span class="type-tag"><span class="swatch" style="background:'+t.color+';"></span>'+esc(t.label)+'</span></td>'+
-        '<td><span class="stage-pill" style="background:'+st.color+';color:'+st.ink+';">'+esc(p.stage)+'</span></td>'+
-        '<td>'+contactCell+'</td>'+
-        '<td style="color:'+(d!==null&&d<0?'var(--critical)':'inherit')+';">'+dueLabel+'</td>'+
-        '<td class="muted">'+esc(p.city||'—')+'</td>'+
-        '<td class="muted">'+esc(p.zip||'—')+'</td>'+
-        '<td class="muted">'+esc(p.assigned_to_name||'Unassigned')+'</td>'+
+        '<td class="org-cell" data-label="Organization">'+esc(p.org_name)+'</td>'+
+        '<td data-label="Type"><span class="type-tag"><span class="swatch" style="background:'+t.color+';"></span>'+esc(t.label)+'</span></td>'+
+        '<td data-label="Stage"><span class="stage-pill" style="background:'+st.color+';color:'+st.ink+';">'+esc(p.stage)+'</span></td>'+
+        '<td data-label="Contact">'+contactCell+'</td>'+
+        '<td data-label="Next Follow-up" style="color:'+(d!==null&&d<0?'var(--critical)':'inherit')+';">'+dueLabel+'</td>'+
+        '<td class="muted" data-label="City">'+esc(p.city||'—')+'</td>'+
+        '<td class="muted" data-label="Zip">'+esc(p.zip||'—')+'</td>'+
+        '<td class="muted" data-label="Assigned">'+esc(p.assigned_to_name||'Unassigned')+'</td>'+
       '</tr>';
     }).join('') : '<tr><td colspan="8" class="empty-note">No partners match yet. Try clearing filters, or add your first referral partner.</td></tr>';
 
@@ -1092,7 +1129,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         '<button class="btn" id="import-csv-btn">'+ICONS.plus+' Import CSV</button>'+
         '<button class="btn btn-primary" id="add-partner-btn">'+ICONS.plus+' Add Partner</button>'+
       '</div>'+
-      '<div class="table-scroll"><table><thead><tr>'+
+      '<div class="table-scroll"><table class="partners-table"><thead><tr>'+
         '<th data-sort="org_name">Organization</th><th data-sort="type">Type</th><th data-sort="stage">Stage</th><th>Contact</th><th data-sort="next_follow_up">Next Follow-up</th><th data-sort="city">City</th><th data-sort="zip">Zip</th><th data-sort="assigned_to_name">Assigned</th>'+
       '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';
   }
