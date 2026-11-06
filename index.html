@@ -299,6 +299,8 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   ];
   var FUNNEL_STAGES = ['Prospect','Contacted','Meeting Scheduled','Active Partner'];
   var PRIORITIES = ['High','Medium','Low'];
+  var VISIT_FREQUENCIES = ['Weekly','Bi-weekly','Monthly'];
+  var VISIT_FREQUENCY_DAYS = {'Weekly':7,'Bi-weekly':14,'Monthly':30};
   var DEFAULT_MARKETING_PLAN = {
     target_segments: "1. Hospital discharge planning teams & case managers — highest-value, time-sensitive referrals for Transitional Care and Home Care.\n2. Physician practices (primary care & specialists treating frail/elderly patients) — steady source for Mobile Primary Care and Complex Chronic Care Management.\n3. Skilled nursing & rehab facilities — post-rehab transitions into Home Care or Transitional Care.\n4. Assisted living & senior living communities — Mobile Primary Care and Hospice referrals.\n5. Hospice liaisons and palliative care teams at other agencies — Hospice referrals.\n6. Community: senior centers, faith communities, elder-law attorneys, financial planners — Home Care and Complex Chronic Care Management word-of-mouth.",
     channels_tactics: "• Direct relationship marketing: recurring in-person visits and lunch-and-learns with discharge planners and case managers — the highest-ROI channel in post-acute referral marketing.\n• Physician liaison program: a dedicated rep visiting primary care and specialist offices on a monthly cadence.\n• Educational in-services at SNFs and assisted living communities on Placita's service lines.\n• Local presence: sponsor or attend senior-focused community events and health fairs.\n• Digital: keep PlacitaCare.com, PlacitaMobilePrimary.com and PlacitaHospice.com current with clear service-line pages and a fast referral form; build local SEO for \"home care\" / \"hospice\" searches in the service area; manage Google Business Profile reviews.\n• Quarterly referral-source newsletter: capacity updates, new service lines, outcomes.\n• Log every outreach touch in this CRM so cadence isn't left to memory.",
@@ -312,7 +314,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   var currentView = 'dashboard';
   var activePartnerId = null;
   var slideOverOpen = false;
-  var filters = { stage:null, type:null, serviceLine:null, q:'' };
+  var filters = { stage:null, type:null, serviceLine:null, assignedTo:null, q:'' };
   var sortCol = 'org_name', sortDir = 1;
   var userMenuOpen = false;
 
@@ -322,6 +324,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
   function uid(p){ return (p||'id')+'_'+Math.random().toString(36).slice(2,9)+Date.now().toString(36); }
   function nowIso(){ return new Date().toISOString(); }
+  function todayIso(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   function fmtDate(iso){
     if(!iso) return '—';
     var d = new Date(iso+(String(iso).length<=10?'T00:00:00':''));
@@ -338,6 +341,18 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     var target = new Date(iso+'T00:00:00');
     var today = new Date(); today.setHours(0,0,0,0);
     return Math.round((target-today)/86400000);
+  }
+  function lastCallAt(p){
+    var calls = (p.activity||[]).filter(function(a){ return a.action==='call'; });
+    return calls.length ? calls[0].ts : null;
+  }
+  function visitOverdueDays(p){
+    var freqDays = VISIT_FREQUENCY_DAYS[p.visit_frequency];
+    if(!freqDays) return null;
+    var baseline = lastCallAt(p) || p.added_at;
+    if(!baseline) return null;
+    var elapsed = Math.floor((Date.now()-new Date(baseline).getTime())/86400000);
+    return elapsed - freqDays;
   }
   function typeInfo(key){ for(var i=0;i<PARTNER_TYPES.length;i++){ if(PARTNER_TYPES[i].key===key) return PARTNER_TYPES[i]; } return PARTNER_TYPES[PARTNER_TYPES.length-1]; }
   function stageInfo(name){ for(var i=0;i<STAGES.length;i++){ if(STAGES[i].key===name) return STAGES[i]; } return STAGES[0]; }
@@ -453,6 +468,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     var row = {
       org_name:data.orgName, type:data.type, service_lines:data.serviceLines,
       address:data.address, city:data.city, zip:data.zip, contacts:data.contacts||[],
+      visit_frequency:data.visitFrequency||'', assigned_to:data.assignedTo||null, assigned_to_name:data.assignedToName||'',
       stage:data.stage, priority:data.priority, next_follow_up:data.nextFollowUp||null,
       activity: logActivityLocal([], 'created', 'Added to the CRM'),
       added_by: session.user.id, added_by_name: profile.name,
@@ -473,6 +489,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     var row = Object.assign({}, {
       org_name:patch.orgName, type:patch.type, service_lines:patch.serviceLines,
       address:patch.address, city:patch.city, zip:patch.zip, contacts:patch.contacts||[],
+      visit_frequency:patch.visitFrequency||'', assigned_to:patch.assignedTo||null, assigned_to_name:patch.assignedToName||'',
       stage:patch.stage, priority:patch.priority, next_follow_up:patch.nextFollowUp||null
     }, { activity:activity, updated_by:session.user.id, updated_by_name:profile.name, updated_at:nowIso() });
     var res = await sbClient.from('partners').update(row).eq('id', id).select().single();
@@ -480,11 +497,26 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     Object.assign(p, res.data);
   }
 
-  async function addNote(id, text){
-    var p = getPartner(id); if(!p || !text.trim()) return;
-    var activity = logActivityLocal(p.activity||[], 'note', text.trim());
+  async function addActivityEntry(id, action, text){
+    var p = getPartner(id); if(!p) return;
+    var activity = logActivityLocal(p.activity||[], action, (text||'').trim());
     var res = await sbClient.from('partners').update({activity:activity, updated_by:session.user.id, updated_by_name:profile.name, updated_at:nowIso()}).eq('id', id).select().single();
-    if(res.error){ toast('Couldn’t save note: '+res.error.message, true); return; }
+    if(res.error){ toast('Couldn’t save: '+res.error.message, true); return false; }
+    Object.assign(p, res.data);
+    return true;
+  }
+  async function addNote(id, text){
+    if(!text.trim()) return;
+    await addActivityEntry(id, 'note', text.trim());
+  }
+  async function logCall(id, text){
+    await addActivityEntry(id, 'call', text.trim());
+  }
+  async function logReferral(id, entry){
+    var p = getPartner(id); if(!p) return;
+    var referrals = [{id:uid('r'), date:entry.date, admitted:!!entry.admitted, mrn:(entry.mrn||'').trim(), logged_by:profile.name, ts:nowIso()}].concat(p.referrals||[]);
+    var res = await sbClient.from('partners').update({referrals:referrals, updated_by:session.user.id, updated_by_name:profile.name, updated_at:nowIso()}).eq('id', id).select().single();
+    if(res.error){ toast('Couldn’t save referral: '+res.error.message, true); return; }
     Object.assign(p, res.data);
   }
 
@@ -715,20 +747,34 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function renderSlideOver(){
     var p = activePartnerId ? getPartner(activePartnerId) : null;
     var isNew = !p;
-    var d = p || {org_name:'',type:'hospital',service_lines:[],city:'',address:'',zip:'',contacts:[],stage:'Prospect',priority:'',next_follow_up:'',activity:[]};
+    var d = p || {org_name:'',type:'hospital',service_lines:[],city:'',address:'',zip:'',contacts:[],stage:'Prospect',priority:'',next_follow_up:'',visit_frequency:'',assigned_to:'',assigned_to_name:'',activity:[],referrals:[]};
 
     var typeOptions = PARTNER_TYPES.map(function(t){ return '<option value="'+t.key+'"'+(d.type===t.key?' selected':'')+'>'+esc(t.label)+'</option>'; }).join('');
     var stageOptions = STAGES.map(function(s){ return '<option value="'+esc(s.key)+'"'+(d.stage===s.key?' selected':'')+'>'+esc(s.key)+'</option>'; }).join('');
     var prioOptions = '<option value="">None</option>'+PRIORITIES.map(function(pr){ return '<option value="'+pr+'"'+(d.priority===pr?' selected':'')+'>'+pr+'</option>'; }).join('');
+    var visitFreqOptions = '<option value="">Not set</option>'+VISIT_FREQUENCIES.map(function(f){ return '<option value="'+f+'"'+(d.visit_frequency===f?' selected':'')+'>'+f+'</option>'; }).join('');
+    var assignedOptions = '<option value="">None assigned</option>'+DATA.team.map(function(t){ return '<option value="'+t.id+'"'+(d.assigned_to===t.id?' selected':'')+'>'+esc(t.name)+'</option>'; }).join('');
+    var lastCall = lastCallAt(d);
+    var overdueDays = isNew ? null : visitOverdueDays(d);
+    var visitStatusNote = !d.visit_frequency ? '' :
+      (overdueDays!==null && overdueDays>0 ? '<span style="color:var(--critical);">'+overdueDays+' day'+(overdueDays===1?'':'s')+' overdue</span>' :
+      (lastCall ? 'Last call '+fmtDate(lastCall) : 'No call logged yet'));
     var chipsHtml = SERVICE_LINES.map(function(sl){
       var on = (d.service_lines||[]).indexOf(sl)>-1;
       return '<button type="button" class="chip-toggle'+(on?' on':'')+'" data-svc="'+esc(sl)+'">'+esc(sl)+'</button>';
     }).join('');
 
     var activityHtml = (d.activity||[]).length ? d.activity.map(function(a){
-      var label = a.action==='created'?'Created':a.action==='stage'?'Stage changed':a.action==='note'?'Note':'Edited';
+      var label = a.action==='created'?'Created':a.action==='stage'?'Stage changed':a.action==='note'?'Note':a.action==='call'?'Call logged':'Edited';
       return '<div class="activity-item"><div class="activity-dot"></div><div><div><strong>'+esc(label)+'</strong>'+(a.detail?' — '+esc(a.detail):'')+'</div><div class="activity-meta">'+esc(a.who)+' · '+fmtDateTime(a.ts)+'</div></div></div>';
     }).join('') : '<p class="empty-note">No activity yet.</p>';
+
+    var referrals = d.referrals||[];
+    var admittedCount = referrals.filter(function(r){ return r.admitted; }).length;
+    var referralsSummary = referrals.length ? '<p class="muted" style="font-size:12px;margin:0 0 8px;">'+referrals.length+' referral'+(referrals.length===1?'':'s')+' logged · '+admittedCount+' admitted</p>' : '';
+    var referralsHtml = referralsSummary + (referrals.length ? referrals.map(function(r){
+      return '<div class="activity-item"><div class="activity-dot"></div><div><div><strong>'+fmtDate(r.date)+'</strong> — '+(r.admitted?'<span style="color:var(--good);">Admitted as client</span>':'Referred, not admitted')+(r.mrn?' · MRN '+esc(r.mrn):'')+'</div><div class="activity-meta">Logged by '+esc(r.logged_by)+'</div></div></div>';
+    }).join('') : '<p class="empty-note">No referrals logged yet.</p>');
 
     var html = ''+
       '<div class="so-head"><div><h3>'+(isNew?'Add referral partner':'Edit partner')+'</h3>'+(isNew?'':'<div class="meta muted" style="font-size:12px;margin-top:3px;">Added by '+esc(d.added_by_name)+' · '+fmtDate(d.added_at)+'</div>')+'</div><button class="btn-ghost btn" id="so-close">'+ICONS.x+'</button></div>'+
@@ -746,16 +792,28 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         '</div>'+
         '<div class="field-row">'+
           '<div class="field"><label>Priority</label><select id="f-priority">'+prioOptions+'</select></div>'+
-          '<div class="field"></div>'+
+          '<div class="field"><label>Next follow-up</label><input type="date" id="f-nextFollowUp" value="'+esc(d.next_follow_up||'')+'"/></div>'+
         '</div>'+
-        '<div class="field"><label>Next follow-up</label><input type="date" id="f-nextFollowUp" value="'+esc(d.next_follow_up||'')+'"/></div>'+
+        '<div class="field-row">'+
+          '<div class="field"><label>Visit frequency</label><select id="f-visit-freq">'+visitFreqOptions+'</select>'+(visitStatusNote?'<div class="muted" style="font-size:11.5px;margin-top:4px;">'+visitStatusNote+'</div>':'')+'</div>'+
+          '<div class="field"><label>Assigned rep</label><select id="f-assigned">'+assignedOptions+'</select></div>'+
+        '</div>'+
         '<div class="divider"></div>'+
         '<label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint); margin-bottom:8px;">Contacts at this location</label>'+
         '<div id="contacts-list">'+((d.contacts&&d.contacts.length) ? d.contacts.map(function(c,i){ return contactRowHtml(c,i); }).join('') : contactRowHtml(null,0))+'</div>'+
         '<button type="button" class="btn add-contact-btn" id="add-contact-btn">'+ICONS.plus+' Add another contact</button>'+
         (isNew ? '' :
           '<div class="divider"></div>'+
-          '<div class="field"><label>Add a note</label><textarea id="f-note" rows="2" placeholder="Log a call, visit, or update…"></textarea><div style="margin-top:6px;"><button class="btn btn-sm" id="add-note-btn">Add note</button></div></div>'+
+          '<div class="field"><label>Add a note or log a call</label><textarea id="f-note" rows="2" placeholder="Optional details…"></textarea><div style="margin-top:6px;display:flex;gap:8px;"><button class="btn btn-sm" id="add-note-btn">Add note</button><button class="btn btn-sm" id="log-call-btn">Log call</button></div></div>'+
+          '<div class="divider"></div>'+
+          '<h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-faint);margin-bottom:4px;">Referrals</h4>'+
+          referralsHtml+
+          '<div class="field-row" style="margin-top:10px;align-items:end;">'+
+            '<div class="field" style="margin-bottom:0;"><label>Date</label><input type="date" id="f-ref-date" value="'+esc(todayIso())+'"/></div>'+
+            '<div class="field" style="margin-bottom:0;"><label>Admitted as client?</label><select id="f-ref-admitted"><option value="">No / not yet</option><option value="yes">Yes</option></select></div>'+
+          '</div>'+
+          '<div class="field" style="margin-top:8px;"><label>MRN <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label><input id="f-ref-mrn" placeholder="e.g. 123456"/></div>'+
+          '<button class="btn btn-sm" id="log-referral-btn" style="margin-top:6px;">'+ICONS.plus+' Log referral</button>'+
           '<div class="divider"></div>'+
           '<h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-faint);margin-bottom:4px;">Activity</h4>'+
           activityHtml
@@ -788,6 +846,19 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       document.getElementById('add-note-btn').addEventListener('click', async function(){
         var v = document.getElementById('f-note').value;
         if(v.trim()){ await addNote(d.id, v); toast('Note added'); render(); }
+        else toast('Add some text first, or use Log call for a quick check-in', true);
+      });
+      document.getElementById('log-call-btn').addEventListener('click', async function(){
+        var v = document.getElementById('f-note').value;
+        await logCall(d.id, v);
+        toast('Call logged'); render();
+      });
+      document.getElementById('log-referral-btn').addEventListener('click', async function(){
+        var dateVal = document.getElementById('f-ref-date').value || todayIso();
+        var admitted = document.getElementById('f-ref-admitted').value==='yes';
+        var mrn = document.getElementById('f-ref-mrn').value;
+        await logReferral(d.id, {date:dateVal, admitted:admitted, mrn:mrn});
+        toast('Referral logged'); render();
       });
     }
     document.getElementById('save-btn').addEventListener('click', async function(){
@@ -801,6 +872,9 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         zip: document.getElementById('f-zip').value.trim(),
         priority: document.getElementById('f-priority').value,
         nextFollowUp: document.getElementById('f-nextFollowUp').value,
+        visitFrequency: document.getElementById('f-visit-freq').value,
+        assignedTo: document.getElementById('f-assigned').value || null,
+        assignedToName: (function(){ var v=document.getElementById('f-assigned').value; if(!v) return ''; var t=DATA.team.filter(function(x){return x.id===v;})[0]; return t?t.name:''; })(),
         contacts: Array.prototype.slice.call(document.querySelectorAll('[data-contact-row]')).map(function(row){
           return {
             name: row.querySelector('[data-c-name]').value.trim(),
@@ -829,13 +903,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     var total = DATA.partners.length;
     var active = DATA.partners.filter(function(p){ return p.stage==='Active Partner'; }).length;
     var prospects = DATA.partners.filter(function(p){ return p.stage==='Prospect'; }).length;
-    var overdue=0, dueSoon=0;
+    var overdue=0, dueSoon=0, visitOverdue=0;
     DATA.partners.forEach(function(p){
       var d = daysUntil(p.next_follow_up);
-      if(d===null) return;
-      if(d<0) overdue++; else if(d<=7) dueSoon++;
+      if(d!==null){ if(d<0) overdue++; else if(d<=7) dueSoon++; }
+      var vo = visitOverdueDays(p);
+      if(vo!==null && vo>0) visitOverdue++;
     });
-    return {total:total, active:active, prospects:prospects, overdue:overdue, dueSoon:dueSoon};
+    return {total:total, active:active, prospects:prospects, overdue:overdue, dueSoon:dueSoon, visitOverdue:visitOverdue};
   }
 
   function kpiCard(label, value, sub, icon, valueColor){
@@ -882,6 +957,27 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return '<div class="followup-row"><div><div class="followup-org">'+esc(p.org_name)+'</div><div class="followup-when">'+fmtDate(p.next_follow_up)+'</div></div><span class="pill '+pillClass+'">'+label+'</span></div>';
     }).join('') : '<p class="empty-note">No follow-ups scheduled yet.</p>';
 
+    var visitOverdueList = DATA.partners.filter(function(p){ var vo=visitOverdueDays(p); return vo!==null && vo>0; })
+      .slice().sort(function(a,b){ return visitOverdueDays(b)-visitOverdueDays(a); }).slice(0,8);
+    var visitOverdueHtml = visitOverdueList.length ? visitOverdueList.map(function(p){
+      var vo = visitOverdueDays(p);
+      return '<div class="followup-row"><div><div class="followup-org">'+esc(p.org_name)+'</div><div class="followup-when">'+esc(p.visit_frequency)+' check-ins</div></div><span class="pill critical">'+vo+'d overdue</span></div>';
+    }).join('') : '<p class="empty-note">Nobody\'s overdue for a check-in.</p>';
+
+    var assignedCounts = {};
+    DATA.team.forEach(function(t){ assignedCounts[t.name]=0; });
+    assignedCounts['Unassigned']=0;
+    DATA.partners.forEach(function(p){
+      var name = p.assigned_to_name || 'Unassigned';
+      assignedCounts[name] = (assignedCounts[name]||0)+1;
+    });
+    var assignedEntries = Object.keys(assignedCounts).filter(function(n){ return assignedCounts[n]>0; }).sort(function(a,b){ return assignedCounts[b]-assignedCounts[a]; });
+    var maxAssigned = Math.max.apply(null, assignedEntries.map(function(n){return assignedCounts[n];}).concat([1]));
+    var assignedHtml = assignedEntries.length ? assignedEntries.map(function(n){
+      var c = assignedCounts[n]; var pct = Math.round(c/maxAssigned*100);
+      return '<div class="barlist-row"><div class="barlist-name"><span class="swatch" style="background:'+(n==='Unassigned'?'var(--ink-faint)':'var(--accent)')+';"></span>'+esc(n)+'</div><div class="barlist-track"><div class="barlist-fill" style="width:'+(pct||4)+'%;background:'+(n==='Unassigned'?'var(--ink-faint)':'var(--accent)')+';"></div></div><div class="barlist-val tabular">'+c+'</div></div>';
+    }).join('') : '<p class="empty-note">Add partners to see the breakdown.</p>';
+
     var teamCounts = {};
     DATA.team.forEach(function(t){ teamCounts[t.name]=0; });
     var cutoff = Date.now() - 30*86400000;
@@ -913,10 +1009,13 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         kpiCard('Active Partners', k.active, 'sending referrals', '<svg class="icon" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg>')+
         kpiCard('Prospects', k.prospects, 'not yet contacted', ICONS.search)+
         kpiCard('Follow-ups Due', k.overdue+k.dueSoon, (k.overdue>0? k.overdue+' overdue' : 'within 7 days'), '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>', k.overdue>0?'var(--critical)':null)+
+        kpiCard('Visit Check-ins Overdue', k.visitOverdue, 'based on set visit frequency', ICONS.sync, k.visitOverdue>0?'var(--critical)':null)+
       '</div>'+
       '<div class="grid panels">'+
         '<div class="card"><h3>Pipeline funnel</h3><div class="funnel">'+funnelHtml+'</div></div>'+
         '<div class="card"><h3>Follow-ups due</h3><div class="followup-list">'+followupHtml+'</div></div>'+
+        '<div class="card"><h3>Visit check-ins overdue</h3><div class="followup-list">'+visitOverdueHtml+'</div></div>'+
+        '<div class="card"><h3>Partners by assigned rep</h3><div class="barlist">'+assignedHtml+'</div></div>'+
         '<div class="card"><h3>Partners by type</h3><div class="barlist">'+typeHtml+'</div></div>'+
         '<div class="card"><h3>Interest by service line</h3><div class="barlist">'+svcHtml+'</div></div>'+
         '<div class="card"><h3>Team activity <span class="n">(30 days)</span></h3><div class="barlist">'+teamHtml+'</div></div>'+
@@ -942,6 +1041,10 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(filters.stage && p.stage!==filters.stage) return false;
       if(filters.type && p.type!==filters.type) return false;
       if(filters.serviceLine && (p.service_lines||[]).indexOf(filters.serviceLine)===-1) return false;
+      if(filters.assignedTo){
+        if(filters.assignedTo==='__none__'){ if(p.assigned_to) return false; }
+        else if(p.assigned_to!==filters.assignedTo) return false;
+      }
       var contactNames = (p.contacts||[]).map(function(c){ return c.name||''; }).join(' ');
       if(q && ((p.org_name||'')+' '+contactNames+' '+(p.city||'')+' '+(p.address||'')+' '+(p.zip||'')).toLowerCase().indexOf(q)===-1) return false;
       return true;
@@ -954,9 +1057,11 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function renderPartnersView(){
     var rows = getFilteredPartners();
 
-    var stageChips = STAGES.map(function(s){ return '<button class="chip'+(filters.stage===s.key?' on':'')+'" data-stage-filter="'+esc(s.key)+'">'+esc(s.key)+'</button>'; }).join('');
+    var stageChips = '<button class="chip'+(!filters.stage?' on':'')+'" data-stage-filter="">ALL</button>'+
+      STAGES.map(function(s){ return '<button class="chip'+(filters.stage===s.key?' on':'')+'" data-stage-filter="'+esc(s.key)+'">'+esc(s.key)+'</button>'; }).join('');
     var typeOptionsFilter = '<option value="">All types</option>'+PARTNER_TYPES.map(function(t){ return '<option value="'+t.key+'"'+(filters.type===t.key?' selected':'')+'>'+esc(t.label)+'</option>'; }).join('');
     var svcOptionsFilter = '<option value="">All service lines</option>'+SERVICE_LINES.map(function(s){ return '<option value="'+esc(s)+'"'+(filters.serviceLine===s?' selected':'')+'>'+esc(s)+'</option>'; }).join('');
+    var assignedOptionsFilter = '<option value="">All reps</option><option value="__none__"'+(filters.assignedTo==='__none__'?' selected':'')+'>None assigned</option>'+DATA.team.map(function(t){ return '<option value="'+t.id+'"'+(filters.assignedTo===t.id?' selected':'')+'>'+esc(t.name)+'</option>'; }).join('');
 
     var rowsHtml = rows.length ? rows.map(function(p){
       var t = typeInfo(p.type); var st = stageInfo(p.stage);
@@ -972,21 +1077,23 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         '<td style="color:'+(d!==null&&d<0?'var(--critical)':'inherit')+';">'+dueLabel+'</td>'+
         '<td class="muted">'+esc(p.city||'—')+'</td>'+
         '<td class="muted">'+esc(p.zip||'—')+'</td>'+
+        '<td class="muted">'+esc(p.assigned_to_name||'Unassigned')+'</td>'+
       '</tr>';
-    }).join('') : '<tr><td colspan="7" class="empty-note">No partners match yet. Try clearing filters, or add your first referral partner.</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="empty-note">No partners match yet. Try clearing filters, or add your first referral partner.</td></tr>';
 
     return ''+
       '<div class="table-toolbar">'+
         '<div class="search-wrap">'+ICONS.search+'<input class="search-input" id="search-input" placeholder="Search organization, contact, city, or zip…" value="'+esc(filters.q)+'"/></div>'+
         '<select id="type-filter-select">'+typeOptionsFilter+'</select>'+
         '<select id="svc-filter-select">'+svcOptionsFilter+'</select>'+
+        '<select id="assigned-filter-select">'+assignedOptionsFilter+'</select>'+
         '<div class="chip-filter">'+stageChips+'</div>'+
         '<button class="btn" id="export-filtered-btn">'+ICONS.plus+' Export '+(rows.length!==DATA.partners.length?'('+rows.length+')':'CSV')+'</button>'+
         '<button class="btn" id="import-csv-btn">'+ICONS.plus+' Import CSV</button>'+
         '<button class="btn btn-primary" id="add-partner-btn">'+ICONS.plus+' Add Partner</button>'+
       '</div>'+
       '<div class="table-scroll"><table><thead><tr>'+
-        '<th data-sort="org_name">Organization</th><th data-sort="type">Type</th><th data-sort="stage">Stage</th><th>Contact</th><th data-sort="next_follow_up">Next Follow-up</th><th data-sort="city">City</th><th data-sort="zip">Zip</th>'+
+        '<th data-sort="org_name">Organization</th><th data-sort="type">Type</th><th data-sort="stage">Stage</th><th>Contact</th><th data-sort="next_follow_up">Next Follow-up</th><th data-sort="city">City</th><th data-sort="zip">Zip</th><th data-sort="assigned_to_name">Assigned</th>'+
       '</tr></thead><tbody>'+rowsHtml+'</tbody></table></div>';
   }
 
@@ -1047,12 +1154,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   function toCsv(partnerList){
-    var cols = ['Organization','Type','Service Lines','Address','City','Zip','Contacts','Stage','Priority','Next Follow-up','Added By','Added At','Last Updated By','Last Updated At'];
+    var cols = ['Organization','Type','Service Lines','Address','City','Zip','Contacts','Stage','Priority','Next Follow-up','Visit Frequency','Assigned Rep','Referrals Logged','Admitted','Added By','Added At','Last Updated By','Last Updated At'];
     var rows = (partnerList||DATA.partners).map(function(p){
       var contactsStr = (p.contacts||[]).map(function(c){
         return [c.name,c.title,c.phone,c.email].filter(Boolean).join(' / ');
       }).join(' | ');
-      return [p.org_name, typeInfo(p.type).label, (p.service_lines||[]).join('; '), p.address, p.city, p.zip, contactsStr, p.stage, p.priority, p.next_follow_up, p.added_by_name, p.added_at, p.updated_by_name, p.updated_at];
+      var refs = p.referrals||[];
+      var admittedCount = refs.filter(function(r){ return r.admitted; }).length;
+      return [p.org_name, typeInfo(p.type).label, (p.service_lines||[]).join('; '), p.address, p.city, p.zip, contactsStr, p.stage, p.priority, p.next_follow_up, p.visit_frequency, p.assigned_to_name||'Unassigned', refs.length, admittedCount, p.added_by_name, p.added_at, p.updated_by_name, p.updated_at];
     });
     function esc1(v){ v = v===undefined||v===null?'':String(v); if(/[",\n]/.test(v)){ v = '"'+v.replace(/"/g,'""')+'"'; } return v; }
     var lines = [cols.map(esc1).join(',')].concat(rows.map(function(r){ return r.map(esc1).join(','); }));
@@ -1130,6 +1239,8 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(typeFilterSelect) typeFilterSelect.addEventListener('change', function(){ filters.type = typeFilterSelect.value || null; render(); });
       var svcFilterSelect = document.getElementById('svc-filter-select');
       if(svcFilterSelect) svcFilterSelect.addEventListener('change', function(){ filters.serviceLine = svcFilterSelect.value || null; render(); });
+      var assignedFilterSelect = document.getElementById('assigned-filter-select');
+      if(assignedFilterSelect) assignedFilterSelect.addEventListener('change', function(){ filters.assignedTo = assignedFilterSelect.value || null; render(); });
       var exportFilteredBtn = document.getElementById('export-filtered-btn');
       if(exportFilteredBtn) exportFilteredBtn.addEventListener('click', function(){
         var filtered = getFilteredPartners();
@@ -1137,13 +1248,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         var nameBits = [];
         if(filters.type) nameBits.push(typeInfo(filters.type).label.toLowerCase().replace(/[^a-z0-9]+/g,'-'));
         if(filters.serviceLine) nameBits.push(filters.serviceLine.toLowerCase().replace(/[^a-z0-9]+/g,'-'));
+        if(filters.assignedTo) nameBits.push(filters.assignedTo==='__none__'?'unassigned':assignedFilterSelect.options[assignedFilterSelect.selectedIndex].text.toLowerCase().replace(/[^a-z0-9]+/g,'-'));
         var nameBit = nameBits.length ? nameBits.join('-') : 'filtered';
         downloadCsv(filtered, isFiltered ? 'placita-partners-'+nameBit+'.csv' : 'placita-partners.csv');
         toast('Downloaded '+filtered.length+' partner'+(filtered.length===1?'':'s'));
       });
       document.querySelectorAll('[data-open]').forEach(function(tr){ tr.addEventListener('click', function(){ openPartnerForm(tr.getAttribute('data-open')); }); });
       document.querySelectorAll('[data-stage-filter]').forEach(function(chip){
-        chip.addEventListener('click', function(){ var s = chip.getAttribute('data-stage-filter'); filters.stage = filters.stage===s? null : s; render(); });
+        chip.addEventListener('click', function(){ var s = chip.getAttribute('data-stage-filter'); filters.stage = s ? (filters.stage===s? null : s) : null; render(); });
       });
       var search = document.getElementById('search-input');
       if(search){
