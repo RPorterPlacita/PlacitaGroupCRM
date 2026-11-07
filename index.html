@@ -495,9 +495,10 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }, 400);
   }
 
-  function logActivityLocal(activity, action, detail){
+  function logActivityLocal(activity, action, detail, extra){
     activity = activity || [];
-    activity = [{id:uid('a'), ts:nowIso(), who:profile.name, action:action, detail:detail||''}].concat(activity);
+    var entry = Object.assign({id:uid('a'), ts:nowIso(), who:profile.name, action:action, detail:detail||''}, extra||{});
+    activity = [entry].concat(activity);
     return activity;
   }
 
@@ -505,7 +506,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     var row = {
       org_name:data.orgName, type:data.type, service_lines:data.serviceLines,
       address:data.address, city:data.city, zip:data.zip, contacts:data.contacts||[],
-      visit_frequency:data.visitFrequency||'', assigned_to:data.assignedTo||null, assigned_to_name:data.assignedToName||'',
+      visit_frequency:data.visitFrequency||'', assigned_to:data.assignedTo||null, assigned_to_name:data.assignedToName||'', special_notes:data.specialNotes||'',
       stage:data.stage, priority:data.priority, next_follow_up:data.nextFollowUp||null,
       activity: logActivityLocal([], 'created', 'Added to the CRM'),
       added_by: session.user.id, added_by_name: profile.name,
@@ -526,7 +527,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     var row = Object.assign({}, {
       org_name:patch.orgName, type:patch.type, service_lines:patch.serviceLines,
       address:patch.address, city:patch.city, zip:patch.zip, contacts:patch.contacts||[],
-      visit_frequency:patch.visitFrequency||'', assigned_to:patch.assignedTo||null, assigned_to_name:patch.assignedToName||'',
+      visit_frequency:patch.visitFrequency||'', assigned_to:patch.assignedTo||null, assigned_to_name:patch.assignedToName||'', special_notes:patch.specialNotes||'',
       stage:patch.stage, priority:patch.priority, next_follow_up:patch.nextFollowUp||null
     }, { activity:activity, updated_by:session.user.id, updated_by_name:profile.name, updated_at:nowIso() });
     var res = await sbClient.from('partners').update(row).eq('id', id).select().single();
@@ -534,9 +535,9 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     Object.assign(p, res.data);
   }
 
-  async function addActivityEntry(id, action, text){
+  async function addActivityEntry(id, action, text, extra){
     var p = getPartner(id); if(!p) return;
-    var activity = logActivityLocal(p.activity||[], action, (text||'').trim());
+    var activity = logActivityLocal(p.activity||[], action, (text||'').trim(), extra);
     var res = await sbClient.from('partners').update({activity:activity, updated_by:session.user.id, updated_by_name:profile.name, updated_at:nowIso()}).eq('id', id).select().single();
     if(res.error){ toast('Couldn’t save: '+res.error.message, true); return false; }
     Object.assign(p, res.data);
@@ -546,12 +547,12 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(!text.trim()) return;
     await addActivityEntry(id, 'note', text.trim());
   }
-  async function logCall(id, text){
-    await addActivityEntry(id, 'call', text.trim());
+  async function logCall(id, text, contactNames){
+    await addActivityEntry(id, 'call', text.trim(), {contacts: contactNames||[]});
   }
   async function logReferral(id, entry){
     var p = getPartner(id); if(!p) return;
-    var referrals = [{id:uid('r'), date:entry.date, admitted:!!entry.admitted, mrn:(entry.mrn||'').trim(), logged_by:profile.name, ts:nowIso()}].concat(p.referrals||[]);
+    var referrals = [{id:uid('r'), date:entry.date, service_line:(entry.serviceLine||''), admitted:!!entry.admitted, mrn:(entry.mrn||'').trim(), logged_by:profile.name, ts:nowIso()}].concat(p.referrals||[]);
     var res = await sbClient.from('partners').update({referrals:referrals, updated_by:session.user.id, updated_by_name:profile.name, updated_at:nowIso()}).eq('id', id).select().single();
     if(res.error){ toast('Couldn’t save referral: '+res.error.message, true); return; }
     Object.assign(p, res.data);
@@ -608,6 +609,35 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
   function closeModal(){ var b = document.getElementById('modal-backdrop'); if(b) b.remove(); }
 
+  function contactLabel(c, idx){ return c.name || c.title || c.phone || ('Contact '+(idx+1)); }
+
+  function openLogCallModal(partnerId, prefillText){
+    var p = getPartner(partnerId); if(!p) return;
+    var contacts = p.contacts||[];
+    var contactsHtml = contacts.length ?
+      '<p class="muted" style="margin:0 0 8px;font-size:12.5px;">Who did you speak with? (optional — tap any that apply)</p>'+
+      '<div class="chips-select" id="call-contacts-select">'+contacts.map(function(c,i){ return '<button type="button" class="chip-toggle" data-call-contact="'+esc(contactLabel(c,i))+'">'+esc(contactLabel(c,i))+'</button>'; }).join('')+'</div>' :
+      '<p class="empty-note">No contacts on file yet for this location.</p>';
+    openModal({
+      title: 'Log a call — '+p.org_name,
+      body: contactsHtml+
+        '<div class="field" style="margin-top:14px;"><label>Notes (optional)</label><textarea id="call-modal-note" rows="3" placeholder="What was discussed…">'+esc(prefillText||'')+'</textarea></div>',
+      actions: [
+        {label:'Log call', primary:true, onClick: async function(){
+          var selected = Array.prototype.slice.call(document.querySelectorAll('[data-call-contact].on')).map(function(b){ return b.getAttribute('data-call-contact'); });
+          var note = document.getElementById('call-modal-note').value;
+          closeModal();
+          await logCall(partnerId, note, selected);
+          toast('Call logged'); render();
+        }},
+        {label:'Cancel', onClick:closeModal}
+      ]
+    });
+    document.querySelectorAll('[data-call-contact]').forEach(function(btn){
+      btn.addEventListener('click', function(){ btn.classList.toggle('on'); });
+    });
+  }
+
   // ---------- CSV import ----------
   var pendingImportRows = null;
 
@@ -637,7 +667,8 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     function col(name){ return header.indexOf(name); }
     var iOrg=col('organization name'), iType=col('type'), iSvc=col('service lines'), iAddr=col('address'), iCity=col('city'), iZip=col('zip'),
         iPrio=col('priority'), iNext=col('next follow-up'),
-        iCName=col('contact name'), iCTitle=col('contact title'), iCPhone=col('contact phone'), iCEmail=col('contact email');
+        iCName=col('contact name'), iCTitle=col('contact title'), iCPhone=col('contact phone'), iCEmail=col('contact email'), iCNotes=col('contact notes'),
+        iSpecial=col('special notes');
     if(iOrg<0) throw new Error('No "Organization Name" column found — check it matches the template');
 
     var typeByLabel = {};
@@ -658,14 +689,15 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           zip: iZip>=0 ? (row[iZip]||'').trim() : '',
           priority: iPrio>=0 ? (row[iPrio]||'').trim() : '',
           next_follow_up: iNext>=0 ? ((row[iNext]||'').trim() || null) : null,
+          special_notes: iSpecial>=0 ? (row[iSpecial]||'').trim() : '',
           stage: 'Prospect',
           contacts: []
         };
         order.push(org);
       }
-      if(iCName>=0 || iCPhone>=0 || iCEmail>=0 || iCTitle>=0){
-        var c = { name:(row[iCName]||'').trim(), title:(row[iCTitle]||'').trim(), phone:(row[iCPhone]||'').trim(), email:(row[iCEmail]||'').trim() };
-        if(c.name||c.title||c.phone||c.email){ groups[org].contacts.push(c); contactCount++; }
+      if(iCName>=0 || iCPhone>=0 || iCEmail>=0 || iCTitle>=0 || iCNotes>=0){
+        var c = { name:(row[iCName]||'').trim(), title:(row[iCTitle]||'').trim(), phone:(row[iCPhone]||'').trim(), email:(row[iCEmail]||'').trim(), notes:(row[iCNotes]||'').trim() };
+        if(c.name||c.title||c.phone||c.email||c.notes){ groups[org].contacts.push(c); contactCount++; }
       }
     }
     return { partners: order.map(function(o){ return groups[o]; }), skipped: skipped, contactCount: contactCount };
@@ -674,9 +706,9 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function csvEsc(v){ v = v===undefined||v===null?'':String(v); if(/[",\n]/.test(v)){ v = '"'+v.replace(/"/g,'""')+'"'; } return v; }
 
   function downloadImportTemplate(){
-    var cols = ['Organization Name','Type','Service Lines','Address','City','Zip','Priority','Next Follow-up','Contact Name','Contact Title','Contact Phone','Contact Email'];
-    var example1 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','85704','','','Jane Smith','Discharge Planner','520-555-0100','jane@example.com'];
-    var example2 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','85704','','','Mark Lee','Case Manager','520-555-0101','mark@example.com'];
+    var cols = ['Organization Name','Type','Service Lines','Address','City','Zip','Priority','Next Follow-up','Special Notes','Contact Name','Contact Title','Contact Phone','Contact Email','Contact Notes'];
+    var example1 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','85704','','','Open 8am-5pm weekdays, use side entrance','Jane Smith','Discharge Planner','520-555-0100','jane@example.com','Prefers email over phone'];
+    var example2 = ['Sonora Valley Hospital','Hospital','Hospice; Home Health','123 Main St','Tucson','85704','','','Open 8am-5pm weekdays, use side entrance','Mark Lee','Case Manager','520-555-0101','mark@example.com',''];
     var text = [cols, example1, example2].map(function(r){ return r.map(csvEsc).join(','); }).join('\n');
     var blob = new Blob([text], {type:'text/csv;charset=utf-8;'});
     var url = URL.createObjectURL(blob);
@@ -728,6 +760,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return {
         org_name: p.org_name, type: p.type, service_lines: p.service_lines,
         address: p.address, city: p.city, zip: p.zip, contacts: p.contacts,
+        special_notes: p.special_notes||'',
         stage: p.stage, priority: p.priority, next_follow_up: p.next_follow_up,
         activity: logActivityLocal([], 'created', 'Imported from CSV'),
         added_by: session.user.id, added_by_name: profile.name,
@@ -758,11 +791,12 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   function contactRowHtml(c, idx){
-    c = c || {name:'',title:'',phone:'',email:''};
+    c = c || {name:'',title:'',phone:'',email:'',notes:''};
     return '<div class="contact-row" data-contact-row>'+
       '<div class="contact-row-head"><span class="n">Contact '+(idx+1)+'</span><button type="button" class="remove-contact-btn" data-remove-contact>Remove</button></div>'+
       '<div class="field-row"><div class="field"><label>Name</label><input data-c-name value="'+esc(c.name)+'"/></div><div class="field"><label>Title</label><input data-c-title value="'+esc(c.title)+'"/></div></div>'+
       '<div class="field-row" style="margin-top:8px;"><div class="field"><label>Phone</label><input data-c-phone value="'+esc(c.phone)+'"/></div><div class="field"><label>Email</label><input data-c-email value="'+esc(c.email)+'"/></div></div>'+
+      '<div class="field" style="margin-top:8px;"><label>Notes</label><textarea data-c-notes rows="2" placeholder="e.g. prefers email, best time to visit, key decision maker…">'+esc(c.notes||'')+'</textarea></div>'+
     '</div>';
   }
 
@@ -784,7 +818,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function renderSlideOver(){
     var p = activePartnerId ? getPartner(activePartnerId) : null;
     var isNew = !p;
-    var d = p || {org_name:'',type:'hospital',service_lines:[],city:'',address:'',zip:'',contacts:[],stage:'Prospect',priority:'',next_follow_up:'',visit_frequency:'',assigned_to:'',assigned_to_name:'',activity:[],referrals:[]};
+    var d = p || {org_name:'',type:'hospital',service_lines:[],city:'',address:'',zip:'',contacts:[],stage:'Prospect',priority:'',next_follow_up:'',visit_frequency:'',assigned_to:'',assigned_to_name:'',special_notes:'',activity:[],referrals:[]};
 
     var typeOptions = PARTNER_TYPES.map(function(t){ return '<option value="'+t.key+'"'+(d.type===t.key?' selected':'')+'>'+esc(t.label)+'</option>'; }).join('');
     var stageOptions = STAGES.map(function(s){ return '<option value="'+esc(s.key)+'"'+(d.stage===s.key?' selected':'')+'>'+esc(s.key)+'</option>'; }).join('');
@@ -803,14 +837,15 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
     var activityHtml = (d.activity||[]).length ? d.activity.map(function(a){
       var label = a.action==='created'?'Created':a.action==='stage'?'Stage changed':a.action==='note'?'Note':a.action==='call'?'Call logged':'Edited';
-      return '<div class="activity-item"><div class="activity-dot"></div><div><div><strong>'+esc(label)+'</strong>'+(a.detail?' — '+esc(a.detail):'')+'</div><div class="activity-meta">'+esc(a.who)+' · '+fmtDateTime(a.ts)+'</div></div></div>';
+      var withWho = (a.action==='call' && a.contacts && a.contacts.length) ? ' <span class="muted">(with '+esc(a.contacts.join(', '))+')</span>' : '';
+      return '<div class="activity-item"><div class="activity-dot"></div><div><div><strong>'+esc(label)+'</strong>'+withWho+(a.detail?' — '+esc(a.detail):'')+'</div><div class="activity-meta">'+esc(a.who)+' · '+fmtDateTime(a.ts)+'</div></div></div>';
     }).join('') : '<p class="empty-note">No activity yet.</p>';
 
     var referrals = d.referrals||[];
     var admittedCount = referrals.filter(function(r){ return r.admitted; }).length;
     var referralsSummary = referrals.length ? '<p class="muted" style="font-size:12px;margin:0 0 8px;">'+referrals.length+' referral'+(referrals.length===1?'':'s')+' logged · '+admittedCount+' admitted</p>' : '';
     var referralsHtml = referralsSummary + (referrals.length ? referrals.map(function(r){
-      return '<div class="activity-item"><div class="activity-dot"></div><div><div><strong>'+fmtDate(r.date)+'</strong> — '+(r.admitted?'<span style="color:var(--good);">Admitted as client</span>':'Referred, not admitted')+(r.mrn?' · MRN '+esc(r.mrn):'')+'</div><div class="activity-meta">Logged by '+esc(r.logged_by)+'</div></div></div>';
+      return '<div class="activity-item"><div class="activity-dot"></div><div><div><strong>'+fmtDate(r.date)+'</strong>'+(r.service_line?' · '+esc(r.service_line):'')+' — '+(r.admitted?'<span style="color:var(--good);">Admitted as client</span>':'Referred, not admitted')+(r.mrn?' · MRN '+esc(r.mrn):'')+'</div><div class="activity-meta">Logged by '+esc(r.logged_by)+'</div></div></div>';
     }).join('') : '<p class="empty-note">No referrals logged yet.</p>');
 
     var html = ''+
@@ -835,6 +870,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           '<div class="field"><label>Visit frequency</label><select id="f-visit-freq">'+visitFreqOptions+'</select>'+(visitStatusNote?'<div class="muted" style="font-size:11.5px;margin-top:4px;">'+visitStatusNote+'</div>':'')+'</div>'+
           '<div class="field"><label>Assigned rep</label><select id="f-assigned">'+assignedOptions+'</select></div>'+
         '</div>'+
+        '<div class="field"><label>Special notes</label><textarea id="f-special-notes" rows="2" placeholder="e.g. hours of operation, parking, front desk procedures…">'+esc(d.special_notes||'')+'</textarea></div>'+
         '<div class="divider"></div>'+
         '<label style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint); margin-bottom:8px;">Contacts at this location</label>'+
         '<div id="contacts-list">'+((d.contacts&&d.contacts.length) ? d.contacts.map(function(c,i){ return contactRowHtml(c,i); }).join('') : contactRowHtml(null,0))+'</div>'+
@@ -849,6 +885,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             '<div class="field" style="margin-bottom:0;"><label>Date</label><input type="date" id="f-ref-date" value="'+esc(todayIso())+'"/></div>'+
             '<div class="field" style="margin-bottom:0;"><label>Admitted as client?</label><select id="f-ref-admitted"><option value="">No / not yet</option><option value="yes">Yes</option></select></div>'+
           '</div>'+
+          '<div class="field" style="margin-top:8px;"><label>Service line referred to</label><select id="f-ref-svc"><option value="">Select service line…</option>'+SERVICE_LINES.map(function(s){ return '<option value="'+esc(s)+'">'+esc(s)+'</option>'; }).join('')+'</select></div>'+
           '<div class="field" style="margin-top:8px;"><label>MRN <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(optional)</span></label><input id="f-ref-mrn" placeholder="e.g. 123456"/></div>'+
           '<button class="btn btn-sm" id="log-referral-btn" style="margin-top:6px;">'+ICONS.plus+' Log referral</button>'+
           '<div class="divider"></div>'+
@@ -885,16 +922,17 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         if(v.trim()){ await addNote(d.id, v); toast('Note added'); render(); }
         else toast('Add some text first, or use Log call for a quick check-in', true);
       });
-      document.getElementById('log-call-btn').addEventListener('click', async function(){
+      document.getElementById('log-call-btn').addEventListener('click', function(){
         var v = document.getElementById('f-note').value;
-        await logCall(d.id, v);
-        toast('Call logged'); render();
+        openLogCallModal(d.id, v);
       });
       document.getElementById('log-referral-btn').addEventListener('click', async function(){
         var dateVal = document.getElementById('f-ref-date').value || todayIso();
         var admitted = document.getElementById('f-ref-admitted').value==='yes';
         var mrn = document.getElementById('f-ref-mrn').value;
-        await logReferral(d.id, {date:dateVal, admitted:admitted, mrn:mrn});
+        var serviceLine = document.getElementById('f-ref-svc').value;
+        if(!serviceLine){ toast('Please select which service line this referral is for', true); return; }
+        await logReferral(d.id, {date:dateVal, admitted:admitted, mrn:mrn, serviceLine:serviceLine});
         toast('Referral logged'); render();
       });
     }
@@ -910,6 +948,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         priority: document.getElementById('f-priority').value,
         nextFollowUp: document.getElementById('f-nextFollowUp').value,
         visitFrequency: document.getElementById('f-visit-freq').value,
+        specialNotes: document.getElementById('f-special-notes').value.trim(),
         assignedTo: document.getElementById('f-assigned').value || null,
         assignedToName: (function(){ var v=document.getElementById('f-assigned').value; if(!v) return ''; var t=DATA.team.filter(function(x){return x.id===v;})[0]; return t?t.name:''; })(),
         contacts: Array.prototype.slice.call(document.querySelectorAll('[data-contact-row]')).map(function(row){
@@ -917,9 +956,10 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             name: row.querySelector('[data-c-name]').value.trim(),
             title: row.querySelector('[data-c-title]').value.trim(),
             phone: row.querySelector('[data-c-phone]').value.trim(),
-            email: row.querySelector('[data-c-email]').value.trim()
+            email: row.querySelector('[data-c-email]').value.trim(),
+            notes: row.querySelector('[data-c-notes]').value.trim()
           };
-        }).filter(function(c){ return c.name || c.title || c.phone || c.email; })
+        }).filter(function(c){ return c.name || c.title || c.phone || c.email || c.notes; })
       };
       if(!data.orgName){ toast('Organization name is required', true); return; }
       var btn = document.getElementById('save-btn'); btn.disabled = true;
@@ -940,14 +980,15 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     var total = DATA.partners.length;
     var active = DATA.partners.filter(function(p){ return p.stage==='Active Partner'; }).length;
     var prospects = DATA.partners.filter(function(p){ return p.stage==='Prospect'; }).length;
-    var overdue=0, dueSoon=0, visitOverdue=0;
+    var overdue=0, dueSoon=0, visitOverdue=0, totalReferrals=0, admittedReferrals=0;
     DATA.partners.forEach(function(p){
       var d = daysUntil(p.next_follow_up);
       if(d!==null){ if(d<0) overdue++; else if(d<=7) dueSoon++; }
       var vo = visitOverdueDays(p);
       if(vo!==null && vo>0) visitOverdue++;
+      (p.referrals||[]).forEach(function(r){ totalReferrals++; if(r.admitted) admittedReferrals++; });
     });
-    return {total:total, active:active, prospects:prospects, overdue:overdue, dueSoon:dueSoon, visitOverdue:visitOverdue};
+    return {total:total, active:active, prospects:prospects, overdue:overdue, dueSoon:dueSoon, visitOverdue:visitOverdue, totalReferrals:totalReferrals, admittedReferrals:admittedReferrals};
   }
 
   function kpiCard(label, value, sub, icon, valueColor){
@@ -985,6 +1026,28 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       var c = svcCounts[s]; var pct = Math.round(c/maxSvc*100);
       return '<div class="barlist-row"><div class="barlist-name"><span class="swatch" style="background:var(--accent);"></span>'+esc(s)+'</div><div class="barlist-track"><div class="barlist-fill" style="width:'+pct+'%;background:var(--accent);"></div></div><div class="barlist-val tabular">'+c+'</div></div>';
     }).join('') : '<p class="empty-note">Add partners to see interest by service line.</p>';
+
+    var refSvcCounts = {};
+    SERVICE_LINES.forEach(function(s){ refSvcCounts[s]=0; });
+    var refSvcUnspecified = 0;
+    DATA.partners.forEach(function(p){ (p.referrals||[]).forEach(function(r){
+      if(r.service_line && refSvcCounts.hasOwnProperty(r.service_line)) refSvcCounts[r.service_line]++;
+      else refSvcUnspecified++;
+    }); });
+    var maxRefSvc = Math.max.apply(null, SERVICE_LINES.map(function(s){return refSvcCounts[s];}).concat([refSvcUnspecified,1]));
+    var refSvcHtml = k.totalReferrals ? SERVICE_LINES.map(function(s){
+      var c = refSvcCounts[s]; var pct = Math.round(c/maxRefSvc*100);
+      return '<div class="barlist-row"><div class="barlist-name"><span class="swatch" style="background:var(--accent);"></span>'+esc(s)+'</div><div class="barlist-track"><div class="barlist-fill" style="width:'+(pct||0)+'%;background:var(--accent);"></div></div><div class="barlist-val tabular">'+c+'</div></div>';
+    }).join('') + (refSvcUnspecified ? '<div class="barlist-row"><div class="barlist-name"><span class="swatch" style="background:var(--ink-faint);"></span>Not specified</div><div class="barlist-track"><div class="barlist-fill" style="width:'+Math.round(refSvcUnspecified/maxRefSvc*100)+'%;background:var(--ink-faint);"></div></div><div class="barlist-val tabular">'+refSvcUnspecified+'</div></div>' : '') : '<p class="empty-note">No referrals logged yet.</p>';
+
+    var refBySourceCounts = {};
+    DATA.partners.forEach(function(p){ var n=(p.referrals||[]).length; if(n>0) refBySourceCounts[p.org_name]=(refBySourceCounts[p.org_name]||0)+n; });
+    var refSourceEntries = Object.keys(refBySourceCounts).sort(function(a,b){ return refBySourceCounts[b]-refBySourceCounts[a]; }).slice(0,8);
+    var maxRefSource = Math.max.apply(null, refSourceEntries.map(function(n){return refBySourceCounts[n];}).concat([1]));
+    var refSourceHtml = refSourceEntries.length ? refSourceEntries.map(function(n){
+      var c = refBySourceCounts[n]; var pct = Math.round(c/maxRefSource*100);
+      return '<div class="barlist-row"><div class="barlist-name"><span class="swatch" style="background:#0A9494;"></span>'+esc(n)+'</div><div class="barlist-track"><div class="barlist-fill" style="width:'+(pct||4)+'%;background:#0A9494;"></div></div><div class="barlist-val tabular">'+c+'</div></div>';
+    }).join('') : '<p class="empty-note">No referrals logged yet.</p>';
 
     var followups = DATA.partners.filter(function(p){ return p.next_follow_up; }).slice().sort(function(a,b){ return a.next_follow_up<b.next_follow_up?-1:1; }).slice(0,8);
     var followupHtml = followups.length ? followups.map(function(p){
@@ -1047,11 +1110,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         kpiCard('Prospects', k.prospects, 'not yet contacted', ICONS.search)+
         kpiCard('Follow-ups Due', k.overdue+k.dueSoon, (k.overdue>0? k.overdue+' overdue' : 'within 7 days'), '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>', k.overdue>0?'var(--critical)':null)+
         kpiCard('Visit Check-ins Overdue', k.visitOverdue, 'based on set visit frequency', ICONS.sync, k.visitOverdue>0?'var(--critical)':null)+
+        kpiCard('Referrals Logged', k.totalReferrals, k.admittedReferrals+' admitted as client', '<svg class="icon" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg>')+
       '</div>'+
       '<div class="grid panels">'+
         '<div class="card"><h3>Pipeline funnel</h3><div class="funnel">'+funnelHtml+'</div></div>'+
         '<div class="card"><h3>Follow-ups due</h3><div class="followup-list">'+followupHtml+'</div></div>'+
         '<div class="card"><h3>Visit check-ins overdue</h3><div class="followup-list">'+visitOverdueHtml+'</div></div>'+
+        '<div class="card"><h3>Referrals by service line</h3><div class="barlist">'+refSvcHtml+'</div></div>'+
+        '<div class="card"><h3>Top referral sources</h3><div class="barlist">'+refSourceHtml+'</div></div>'+
         '<div class="card"><h3>Partners by assigned rep</h3><div class="barlist">'+assignedHtml+'</div></div>'+
         '<div class="card"><h3>Partners by type</h3><div class="barlist">'+typeHtml+'</div></div>'+
         '<div class="card"><h3>Interest by service line</h3><div class="barlist">'+svcHtml+'</div></div>'+
@@ -1191,14 +1257,17 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   function toCsv(partnerList){
-    var cols = ['Organization','Type','Service Lines','Address','City','Zip','Contacts','Stage','Priority','Next Follow-up','Visit Frequency','Assigned Rep','Referrals Logged','Admitted','Added By','Added At','Last Updated By','Last Updated At'];
+    var cols = ['Organization','Type','Service Lines','Address','City','Zip','Special Notes','Contacts','Stage','Priority','Next Follow-up','Visit Frequency','Assigned Rep','Referrals Logged','Referrals By Service Line','Admitted','Added By','Added At','Last Updated By','Last Updated At'];
     var rows = (partnerList||DATA.partners).map(function(p){
       var contactsStr = (p.contacts||[]).map(function(c){
-        return [c.name,c.title,c.phone,c.email].filter(Boolean).join(' / ');
+        return [c.name,c.title,c.phone,c.email,(c.notes?'Notes: '+c.notes:'')].filter(Boolean).join(' / ');
       }).join(' | ');
       var refs = p.referrals||[];
       var admittedCount = refs.filter(function(r){ return r.admitted; }).length;
-      return [p.org_name, typeInfo(p.type).label, (p.service_lines||[]).join('; '), p.address, p.city, p.zip, contactsStr, p.stage, p.priority, p.next_follow_up, p.visit_frequency, p.assigned_to_name||'Unassigned', refs.length, admittedCount, p.added_by_name, p.added_at, p.updated_by_name, p.updated_at];
+      var refSvcCounts = {};
+      refs.forEach(function(r){ var s = r.service_line||'Not specified'; refSvcCounts[s] = (refSvcCounts[s]||0)+1; });
+      var refSvcStr = Object.keys(refSvcCounts).map(function(s){ return s+' x'+refSvcCounts[s]; }).join('; ');
+      return [p.org_name, typeInfo(p.type).label, (p.service_lines||[]).join('; '), p.address, p.city, p.zip, p.special_notes, contactsStr, p.stage, p.priority, p.next_follow_up, p.visit_frequency, p.assigned_to_name||'Unassigned', refs.length, refSvcStr, admittedCount, p.added_by_name, p.added_at, p.updated_by_name, p.updated_at];
     });
     function esc1(v){ v = v===undefined||v===null?'':String(v); if(/[",\n]/.test(v)){ v = '"'+v.replace(/"/g,'""')+'"'; } return v; }
     var lines = [cols.map(esc1).join(',')].concat(rows.map(function(r){ return r.map(esc1).join(','); }));
